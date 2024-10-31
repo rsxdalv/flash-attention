@@ -702,7 +702,7 @@ struct CollectiveMainloopFwd {
         warp_scheduler_barrier_sync();
         flash::gemm</*zero_init=*/true, /*wg_wait=*/-1>(tiled_mma0, tSrQ, tSrK(_, _, _, smem_pipe_read_k.index()), tSrS);
         warp_scheduler_barrier_arrive();
-        if constexpr (!No_smem_O) {
+        if constexpr (!No_smem_O && !seqlen_traits_q.UseVarSeqLen) {
             if (work_idx != 0) {
                 int lane_predicate = cute::elect_one_sync();
                 if (cutlass::canonical_warp_idx_sync() == Ktraits::kNWarps - 1 && lane_predicate) {
@@ -901,7 +901,7 @@ struct CollectiveMainloopFwd {
         consumer_wait(pipeline_k, smem_pipe_read);                        
         warp_scheduler_barrier_sync();
         flash::gemm</*zero_init=*/true, /*wg_wait=*/-1>(tiled_mma0, tSrQ, tSrK(_, _, _, smem_pipe_read.index()), tSrS);
-        if constexpr (!No_smem_O) {
+        if constexpr (!No_smem_O && !seqlen_traits_q.UseVarSeqLen) {
             if (work_idx != 0) {        
                 int lane_predicate = cute::elect_one_sync();
                 if (cutlass::canonical_warp_idx_sync() == Ktraits::kNWarps - 1 && lane_predicate) {

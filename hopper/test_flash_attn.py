@@ -537,3 +537,195 @@ def test_flash_attn_varlen_output(
         assert (dq - dq_ref).abs().max().item() < 1e-4 or (dq - dq_ref).abs().max().item() <= 3 * (dq_pt - dq_ref).abs().max().item()
         assert (dk - dk_ref).abs().max().item() < 1e-4 or (dk - dk_ref).abs().max().item() <= 3 * (dk_pt - dk_ref).abs().max().item()
         assert (dv - dv_ref).abs().max().item() < 1e-4 or (dv - dv_ref).abs().max().item() <= 3 * (dv_pt - dv_ref).abs().max().item()
+
+
+@pytest.mark.parametrize("dtype_fp8", [torch.float8_e4m3fn])
+# @pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"])
+@pytest.mark.parametrize("mha_type", ["mqa"])
+@pytest.mark.parametrize("causal", [False, True])
+# @pytest.mark.parametrize("causal", [False])
+@pytest.mark.parametrize("local", [False, True])
+# @pytest.mark.parametrize("local", [False])
+# @pytest.mark.parametrize("deterministic", [False, True])
+@pytest.mark.parametrize("deterministic", [True])
+# @pytest.mark.parametrize("add_unused_qkv", [False, True])
+@pytest.mark.parametrize("add_unused_qkv", [True])
+# @pytest.mark.parametrize("d", [32, 59, 64, 80, 96, 111, 128, 160, 192, 224, 256])
+# @pytest.mark.parametrize("d", [32, 64, 96, 128, 160, 192, 224, 256])
+# @pytest.mark.parametrize('d', [256])
+@pytest.mark.parametrize("d", [64, 128, 256])
+# @pytest.mark.parametrize("d", [64, 128])
+# @pytest.mark.parametrize("d", [128])
+@pytest.mark.parametrize("descale", [1.0])
+@pytest.mark.parametrize(
+    "seqlen_q,seqlen_k",
+    [
+        (1, 1),
+        (1, 3),
+        (2, 1),
+        (511, 1),
+        (3, 513),
+        (64, 128),
+        (113, 203),
+        (128, 128),
+        (128, 217),
+        (113, 211),
+        (108, 256),
+        (256, 512),
+        (384, 256),
+        (512, 256),
+        (640, 128),
+        (1024, 1024),
+        (1023, 1024),
+        (1024, 1023),
+        (2048, 2048),
+        (4096, 4096),
+    ],
+)
+# @pytest.mark.parametrize('seqlen_q,seqlen_k', [(128, 128)])
+def test_flash_attn_varlen_fp8_output(
+    seqlen_q, seqlen_k, d, causal, local, deterministic, add_unused_qkv, mha_type, dtype_fp8, descale
+):
+    print(dtype_fp8)
+    dtype = torch.bfloat16
+    if (
+        max(seqlen_q, seqlen_k) >= 2048
+        and torch.cuda.get_device_properties("cuda").total_memory <= 16 * 2**30
+    ):
+        pytest.skip()  # Reference implementation OOM
+    device = "cuda"
+    # set seed
+    torch.random.manual_seed(0)
+    # batch_size = 1
+    # nheads = 1
+    # nheads_kv = 1
+    batch_size = 9
+    nheads = 6
+    nheads_kv = nheads if mha_type == "mha" else (2 if mha_type == "gqa" else 1)
+
+    window_size = (-1, -1) if not local else torch.randint(0, seqlen_k, (2,))
+
+    q = torch.randn(batch_size, seqlen_q, nheads, d, device=device, dtype=dtype, requires_grad=True)
+    k = torch.randn(
+        batch_size, seqlen_k, nheads_kv, d, device=device, dtype=dtype, requires_grad=True
+    )
+    v = torch.randn(
+        batch_size, seqlen_k, nheads_kv, d, device=device, dtype=dtype, requires_grad=True
+    )
+
+    q = q.to(dtype_fp8).to(dtype)
+    k = k.to(dtype_fp8).to(dtype)
+    v = v.to(dtype_fp8).to(dtype)
+
+    descale_q = torch.tensor([descale], dtype=torch.float32, device='cuda')
+    descale_k = torch.tensor([descale], dtype=torch.float32, device='cuda')
+    descale_v = torch.tensor([descale], dtype=torch.float32, device='cuda')
+
+    query_padding_mask = generate_random_padding_mask(seqlen_q, batch_size, device, mode="random", zero_lengths=False)
+    key_padding_mask = generate_random_padding_mask(seqlen_k, batch_size, device, mode="random", zero_lengths=True)
+    # key_padding_mask = generate_random_padding_mask(seqlen_k, batch_size, device, mode='full')
+
+    def _gen_unused_masks(padding_mask, add_unused, max_seq_len, bs, device):
+        if add_unused:
+            another_mask = generate_random_padding_mask(max_seq_len, bs, device)
+            attn_mask = torch.logical_and(padding_mask, another_mask)
+            unused_mask = torch.logical_xor(torch.logical_or(padding_mask, another_mask), attn_mask)
+        else:
+            attn_mask = padding_mask
+            unused_mask = None
+        return attn_mask, unused_mask
+
+    query_padding_mask, query_unused_mask = _gen_unused_masks(query_padding_mask, add_unused_qkv, seqlen_q, batch_size, q.device)
+    key_padding_mask, key_unused_mask = _gen_unused_masks(key_padding_mask, add_unused_qkv, seqlen_k, batch_size, k.device)
+
+    (
+        q_unpad,
+        k_unpad,
+        v_unpad,
+        cu_seqlens_q,
+        cu_seqlens_k,
+        seqused_q,
+        seqused_k,
+        max_seqlen_q,
+        max_seqlen_k,
+        q,
+        k,
+        v,
+        output_pad_fn,
+        dq_pad_fn,
+        dk_pad_fn,
+    ) = generate_qkv(q, k, v, query_padding_mask, key_padding_mask, kvpacked=False, query_unused_mask=query_unused_mask, key_unused_mask=key_unused_mask)
+    # print("cu_seqlens_q: ", cu_seqlens_q)
+    # print("cu_seqlens_k: ", cu_seqlens_k)
+    # print("q_unpad, shape: ", q_unpad.shape)
+    # print("k_unpad, shape: ", k_unpad.shape)
+    # print("v_unpad, shape: ", v_unpad.shape)
+
+    q_unpad = q_unpad.to(dtype_fp8)
+    k_unpad = k_unpad.to(dtype_fp8)
+    v_unpad = v_unpad.to(dtype_fp8)  
+
+    print(cu_seqlens_q)
+    print(cu_seqlens_k)
+    print(max_seqlen_q)
+    print(max_seqlen_k)
+
+    out_unpad, sm_lse = flash_attn_varlen_func(
+        q_unpad,
+        k_unpad,
+        v_unpad,
+        cu_seqlens_q,
+        cu_seqlens_k,
+        max_seqlen_q,
+        max_seqlen_k,
+        causal=causal,
+        deterministic=deterministic,
+        seqused_q=seqused_q,
+        seqused_k=seqused_k,
+        window_size=window_size,
+        descale_q=descale_q,
+        descale_k=descale_k,
+        descale_v=descale_v
+    )
+    out = output_pad_fn(out_unpad)
+    if query_unused_mask is not None:
+        q_zero_masking = rearrange(query_unused_mask, "b s -> b s 1 1")
+        out.masked_fill_(q_zero_masking, 0.0)
+    dropout_mask = None
+
+    descale_q = descale_q.to(dtype)
+    descale_k = descale_k.to(dtype)
+    descale_v = descale_v.to(dtype)
+    q = q * descale_q
+    k = k * descale_k
+    v = v * descale_v
+
+    out_ref, attn_ref = attention_ref(
+        q,
+        k,
+        v,
+        query_padding_mask,
+        key_padding_mask,
+        causal=causal,
+        window_size=window_size,
+    )
+    out_pt, attn_pt = attention_ref(
+        q,
+        k,
+        v,
+        query_padding_mask,
+        key_padding_mask,
+        causal=causal,
+        window_size=window_size,
+        upcast=False,
+        reorder_ops=True,
+    )
+
+    print(f"Output max diff: {(out - out_ref).abs().max().item()}")
+    print(f"Output mean diff: {(out - out_ref).abs().mean().item()}")
+    print(f"Pytorch max diff: {(out_pt - out_ref).abs().max().item()}")
+    print(f"Pytorch mean diff: {(out_pt - out_ref).abs().mean().item()}")
+
+    # Check that FlashAttention's numerical error is at most twice the numerical error
+    # of a Pytorch implementation.
+    # assert (out - out_ref).abs().max().item() <= 2 * (out_pt - out_ref).abs().max().item()

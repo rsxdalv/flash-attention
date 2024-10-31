@@ -13,7 +13,7 @@ from flash_attn.utils.benchmark import benchmark_all, benchmark_forward, benchma
 from flash_attn.utils.benchmark import benchmark_fwd_bwd, benchmark_combined
 
 from flash_attn import flash_attn_qkvpacked_func
-from flash_attn_interface import flash_attn_func, _flash_attn_forward
+from flash_attn_interface import flash_attn_func, _flash_attn_forward, _flash_attn_varlen_forward
 
 try:
     from triton_fused_attention import attention as attention_triton
@@ -128,7 +128,7 @@ def cudnn_spda_setup(qkv, seqlen_q, seqlen_k, causal=False):
         descale_s=descale_s,
         scale_s=scale_s,
         scale_o=scale_o,
-        is_inference=True,
+        is_inference=False,
         attn_scale=1.0 / math.sqrt(headdim),
         use_causal_mask=causal,
         name="sdpa",
@@ -214,7 +214,7 @@ def time_fwd(func, *args, **kwargs):
 
 torch.manual_seed(0)
 
-repeats = 30
+repeats = 20
 device = 'cuda'
 # dtype = torch.float16
 dtype = torch.float8_e4m3fn
@@ -225,11 +225,13 @@ bs_seqlen_vals = [(32, 512), (16, 1024), (8, 2048), (4, 4096), (2, 8192), (1, 81
 # bs_seqlen_vals = [(32, 512), (16, 1024), (8, 2048)]
 causal_vals = [False, True]
 headdim_vals = [64, 128, 256]
+# headdim_vals = [128]
 dim = 2048
 # dim = 256
 dropout_p = 0.0
 
 methods = (["Pytorch", "Flash3"]
+        + (["FA3 varlen"])
         + (["cuDNN"] if cudnn is not None else [])
         # + (["Triton"] if attention_triton is not None else [])
         #    + (["xformers.c"] if xops is not None else [])
@@ -337,6 +339,37 @@ for causal in causal_vals:
                 #         print(item_baseline)
                 # torch.testing.assert_close(res, res_baseline, atol=0.05, rtol=0.05)
 
+            # For var-seq-len
+            lens = torch.full([q.shape[0]], seqlen, dtype=torch.int32)
+            cu_seqlens = torch.cat([torch.tensor([0], dtype=torch.int32), torch.cumsum(lens, dim=0, dtype=torch.int32)]).cuda()
+
+            q_var = q.reshape(-1, q.shape[-2], q.shape[-1])
+            k_var = k.reshape(-1, k.shape[-2], k.shape[-1])
+            v_var = v.reshape(-1, v.shape[-2], v.shape[-1])
+            # print(q_var.shape, q_var.dtype)
+            # print(k_var.shape, k_var.dtype)
+            # print(v_var.shape, v_var.dtype)
+
+            f = time_fwd(
+                _flash_attn_varlen_forward,
+                q_var, 
+                k_var, 
+                v_var, 
+                cu_seqlens,
+                cu_seqlens,
+                seqlen,
+                seqlen,
+                softmax_scale, 
+                causal=causal,
+                window_size=(-1,-1),
+                descale_q=descale_q, 
+                descale_k=descale_k, 
+                descale_v=descale_v, 
+                repeats=repeats, 
+                verbose=False
+            )
+            time_f[config, "FA3 varlen"] = f
+            
             print(f"### causal={causal}, headdim={headdim}, batch_size={batch_size}, seqlen={seqlen} ###")
             for method in methods:
                 speed_f[config, method] = efficiency(

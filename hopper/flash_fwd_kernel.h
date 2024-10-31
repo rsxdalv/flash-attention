@@ -80,7 +80,13 @@ __global__ void __launch_bounds__(Ktraits::kNWarps * cutlass::NumThreadsPerWarp,
 
     if (warp_idx == 0 && lane_predicate) {
         shared_storage.barrier_Q.init(1 /*numThreads*/);
-        if constexpr (!No_smem_O) { shared_storage.barrier_O.init(size(ClusterShape{}) /*numThreads*/); }
+        if constexpr (!No_smem_O) {
+            if constexpr(seqlen_traits_q.UseVarSeqLen) {
+                shared_storage.barrier_O.init(NumMmaThreads /*numThreads*/);
+            } else {
+                shared_storage.barrier_O.init(size(ClusterShape{}) /*numThreads*/);
+            }
+        }
     }
     // We're counting on pipeline_k to call cutlass::arch::fence_barrier_init();
     MainloopPipeline pipeline_k(shared_storage.pipeline_k, pipeline_params, ClusterShape{});
@@ -121,6 +127,8 @@ __global__ void __launch_bounds__(Ktraits::kNWarps * cutlass::NumThreadsPerWarp,
                 if constexpr(seqlen_traits_q.UseVarSeqLen) {
                     // NOTE: to support in future with gqa packed layouts, changed kBlockM to kBlockM/kBlockH
                     if (m_block * (kBlockM/kBlockH) >= seqlen_traits_q.actual_seq_len) {
+                        scheduler.prefetch_next_work(scheduler_params, work_tile_info);
+                        scheduler.broadcast_next_work(work_tile_info);
                         continue;
                     }
                 }
@@ -202,7 +210,7 @@ __global__ void __launch_bounds__(Ktraits::kNWarps * cutlass::NumThreadsPerWarp,
             collective_epilogue.store(
                 epilogue_params, tOrO, softmax.row_sum, shared_storage, tiled_mma1,
                 threadIdx.x - NumCopyThreads, block_coord, seqlen_traits_q, mainloop_params.qhead_per_khead_divmod);
-
+            if constexpr(!No_smem_O && seqlen_traits_q.UseVarSeqLen) { shared_storage.barrier_O.arrive(); }
             ++work_idx;
         }
         collective_epilogue.store_tail();
@@ -277,7 +285,13 @@ __global__ void __launch_bounds__(Ktraits::kNWarps * cutlass::NumThreadsPerWarp,
 
     if (warp_idx == 0 && lane_predicate) {
         shared_storage.barrier_Q.init(1 /*numThreads*/);
-        if constexpr (!No_smem_O) { shared_storage.barrier_O.init(size(ClusterShape{}) /*numThreads*/); }
+        if constexpr (!No_smem_O) {
+            if constexpr(seqlen_traits_q.UseVarSeqLen) {
+                shared_storage.barrier_O.init(NumMmaThreads /*numThreads*/);
+            } else {
+                shared_storage.barrier_O.init(size(ClusterShape{}) /*numThreads*/);
+            }
+        }
     }
     // We're counting on pipeline_k to call cutlass::arch::fence_barrier_init();
     MainloopPipeline pipeline_k(shared_storage.pipeline_k, pipeline_params, ClusterShape{});
@@ -321,10 +335,15 @@ __global__ void __launch_bounds__(Ktraits::kNWarps * cutlass::NumThreadsPerWarp,
             auto [m_block, n_split_idx, bidh, bidb] = block_coord;
 
             if constexpr (seqlen_traits_q.UseVarSeqLen) { seqlen_traits_q.init(bidb); }
-            if (shared_storage.seqlen_init_k) { seqlen_traits_k.init_no_guard(bidb); }
+            if constexpr (seqlen_traits_k.UseVarSeqLen) { seqlen_traits_k.init(bidb); }
+            else if (shared_storage.seqlen_init_k) { seqlen_traits_k.init_no_guard(bidb); }
             if constexpr(seqlen_traits_q.UseVarSeqLen) {
                 // NOTE: to support in future with gqa packed layout, changed kBlockM to kBlockM/kBlockH
                 if (m_block * (kBlockM/kBlockH) >= seqlen_traits_q.actual_seq_len) {
+                    scheduler.prefetch_next_work(scheduler_params, work_tile_info);
+                    scheduler.broadcast_next_work(work_tile_info);
+                    // need to sync producer warpgroup
+                    cutlass::arch::NamedBarrier::sync(NumCopyThreads, static_cast<int>(FwdNamedBarriers::ProducerWG) /*id*/);
                     continue;
                 }
             }
@@ -377,7 +396,8 @@ __global__ void __launch_bounds__(Ktraits::kNWarps * cutlass::NumThreadsPerWarp,
             auto [m_block, n_split_idx, bidh, bidb] = block_coord;
 
             if constexpr (seqlen_traits_q.UseVarSeqLen) { seqlen_traits_q.init(bidb); }
-            if (shared_storage.seqlen_init_k) { seqlen_traits_k.init_no_guard(bidb); }
+            if constexpr (seqlen_traits_k.UseVarSeqLen) { seqlen_traits_k.init(bidb); }
+            else if (shared_storage.seqlen_init_k) { seqlen_traits_k.init_no_guard(bidb); }
             if constexpr(seqlen_traits_q.UseVarSeqLen) {
                 // NOTE: to support in future with gqa packed layout, changed kBlockM to kBlockM/kBlockH
                 if (m_block * (kBlockM/kBlockH) >= seqlen_traits_q.actual_seq_len) {
@@ -409,7 +429,7 @@ __global__ void __launch_bounds__(Ktraits::kNWarps * cutlass::NumThreadsPerWarp,
             collective_epilogue.store(
                 epilogue_params, tOrO, softmax.row_sum, shared_storage, tiled_mma1,
                 threadIdx.x - NumCopyThreads, block_coord, seqlen_traits_q, mainloop_params.qhead_per_khead_divmod);
-
+            if constexpr(!No_smem_O && seqlen_traits_q.UseVarSeqLen) { shared_storage.barrier_O.arrive(); }
             ++work_idx;
         }
         collective_epilogue.store_tail();

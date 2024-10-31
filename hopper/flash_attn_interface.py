@@ -14,7 +14,18 @@ import flashattn_hopper_cuda
 def maybe_contiguous(x):
     return x.contiguous() if x is not None and x.stride(-1) != 1 else x
 
-def _flash_attn_forward(q, k, v, softmax_scale, causal, window_size, descale_q = None, descale_k = None, descale_v = None, gqa_parallel=False):
+def _flash_attn_forward(
+    q,
+    k,
+    v,
+    softmax_scale,
+    causal, 
+    window_size, 
+    descale_q = None, 
+    descale_k = None, 
+    descale_v = None, 
+    gqa_parallel=False
+):
     q, k, v = [maybe_contiguous(x) for x in (q, k, v)]
     out, q, k, v, out_padded, softmax_lse, S_dmask = flashattn_hopper_cuda.fwd(
         q,
@@ -81,6 +92,9 @@ def _flash_attn_varlen_forward(
     window_size=(-1, -1),
     seqused_q=None,
     seqused_k=None,
+    descale_q=None, 
+    descale_k=None, 
+    descale_v=None,
 ):
     maybe_contiguous = lambda x: x.contiguous() if x.stride(-1) != 1 else x
     q, k, v = [maybe_contiguous(x) for x in (q, k, v)]
@@ -96,6 +110,9 @@ def _flash_attn_varlen_forward(
         max_seqlen_q,
         max_seqlen_k,
         softmax_scale,
+        descale_q,
+        descale_k,
+        descale_v,
         causal,
         window_size[0],
         window_size[1],
@@ -242,6 +259,9 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
         deterministic=False,
         seqused_q=None,
         seqused_k=None,
+        descale_q=None,
+        descale_k=None,
+        descale_v=None,
     ):
         if softmax_scale is None:
             softmax_scale = q.shape[-1] ** (-0.5)
@@ -258,6 +278,9 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
             window_size=window_size,
             seqused_q=seqused_q,
             seqused_k=seqused_k,
+            descale_q=descale_q,
+            descale_k=descale_k,
+            descale_v=descale_v,
         )
         ctx.save_for_backward(
             q, k, v, out_padded, softmax_lse, cu_seqlens_q, cu_seqlens_k,
@@ -299,7 +322,7 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
         dq = dq[..., : dout.shape[-1]]  # We could have padded the head dimension
         dk = dk[..., : dout.shape[-1]]
         dv = dv[..., : dout.shape[-1]]
-        return dq, dk, dv, None, None, None, None, None, None, None, None, None, None
+        return dq, dk, dv, None, None, None, None, None, None, None, None, None, None, None, None, None
 
 
 def flash_attn_func(
@@ -395,6 +418,9 @@ def flash_attn_varlen_func(
     deterministic=False,
     seqused_q=None,
     seqused_k=None,
+    descale_q=None,
+    descale_k=None,
+    descale_v=None,
 ):
     """
     Supports multi-query and grouped-query attention (MQA/GQA) by passing in K, V with fewer heads
@@ -450,6 +476,9 @@ def flash_attn_varlen_func(
         deterministic,
         seqused_q,
         seqused_k,
+        descale_q,
+        descale_k,
+        descale_v,
     )
 
 

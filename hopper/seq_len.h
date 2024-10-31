@@ -218,6 +218,12 @@ CUTLASS_DEVICE void VarSeqLenTraits::init(int bidb) {
 }
 
 template <>
+CUTLASS_DEVICE void VarSeqLenTraits::init_no_guard(int bidb) {
+  actual_seq_len = 
+      seq_used ? seq_used[bidb] : (cu_seq_len[bidb + 1] - cu_seq_len[bidb]);
+}
+
+template <>
 CUTLASS_DEVICE void FixedGQASeqLenTraits::init(int bidb) {
   // no op
 }

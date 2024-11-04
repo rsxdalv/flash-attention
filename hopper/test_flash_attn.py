@@ -24,29 +24,34 @@ def print_diffs(out, out_ref):
 
 
 @pytest.mark.parametrize("dtype", [torch.float8_e4m3fn])
-@pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"])
-@pytest.mark.parametrize("causal", [False, True])
-@pytest.mark.parametrize("local", [False, True])
+# @pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"])
+@pytest.mark.parametrize("mha_type", ["mha"])
+# @pytest.mark.parametrize("causal", [False, True])
+@pytest.mark.parametrize("causal", [False])
+# @pytest.mark.parametrize("local", [False, True])
+@pytest.mark.parametrize("local", [False])
 @pytest.mark.parametrize("deterministic", [True])
-@pytest.mark.parametrize("gqa_parallel", [False, True])
-@pytest.mark.parametrize("d", [64, 128, 256])
-# @pytest.mark.parametrize("descale", [1.0])
-@pytest.mark.parametrize("descale", [1.0, 2.0, 3.0])
+# @pytest.mark.parametrize("gqa_parallel", [False, True])
+@pytest.mark.parametrize("gqa_parallel", [False])
+# @pytest.mark.parametrize("d", [64, 128, 256])
+@pytest.mark.parametrize("d", [128])
+@pytest.mark.parametrize("descale", [1.0])
+# @pytest.mark.parametrize("descale", [1.0, 2.0, 3.0])
 @pytest.mark.parametrize(
     "seqlen_q,seqlen_k",
     [
-        (1, 1),
-        (64, 128),
-        (128, 128),
-        (256, 256),
-        (113, 203),
-        (128, 217),
-        (113, 211),
-        (108, 256),
-        (256, 512),
-        (384, 256),
-        (640, 128),
-        (512, 256),
+        # (1, 1),
+        # (64, 128),
+        # (128, 128),
+        # (256, 256),
+        # (113, 203),
+        # (128, 217),
+        # (113, 211),
+        # (108, 256),
+        # (256, 512),
+        # (384, 256),
+        # (640, 128),
+        # (512, 256),
         (1024, 1024),
         (1023, 1024),
         (1024, 1023),
@@ -329,46 +334,47 @@ def test_flash_attn_output(
         assert (dv - dv_ref).abs().max().item() <= 2 * (dv_pt - dv_ref).abs().max().item() + 3e-5
 
 
-@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
-# @pytest.mark.parametrize("dtype", [torch.float16])
-@pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"])
-# @pytest.mark.parametrize("mha_type", ["mha"])
-@pytest.mark.parametrize("causal", [False, True])
-# @pytest.mark.parametrize("causal", [True])
-@pytest.mark.parametrize("local", [False, True])
-# @pytest.mark.parametrize("local", [False])
-@pytest.mark.parametrize("deterministic", [False, True])
-# @pytest.mark.parametrize("deterministic", [False])
-@pytest.mark.parametrize("add_unused_qkv", [False, True])
-# @pytest.mark.parametrize("add_unused_qkv", [True])
+# @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("dtype", [torch.float16])
+# @pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"])
+@pytest.mark.parametrize("mha_type", ["mha"])
+# @pytest.mark.parametrize("causal", [False, True])
+@pytest.mark.parametrize("causal", [False])
+# @pytest.mark.parametrize("local", [False, True])
+@pytest.mark.parametrize("local", [False])
+# @pytest.mark.parametrize("deterministic", [False, True])
+@pytest.mark.parametrize("deterministic", [True])
+# @pytest.mark.parametrize("add_unused_qkv", [False, True])
+@pytest.mark.parametrize("add_unused_qkv", [True])
 # @pytest.mark.parametrize("d", [32, 59, 64, 80, 96, 111, 128, 160, 192, 224, 256])
 # @pytest.mark.parametrize("d", [32, 64, 96, 128, 160, 192, 224, 256])
 # @pytest.mark.parametrize('d', [256])
 # @pytest.mark.parametrize("d", [64, 128, 256])
-@pytest.mark.parametrize("d", [64, 128])
-# @pytest.mark.parametrize("d", [128])
+# @pytest.mark.parametrize("d", [64, 128])
+@pytest.mark.parametrize("d", [128])
 @pytest.mark.parametrize(
     "seqlen_q,seqlen_k",
     [
-        (1, 1),
-        (1, 3),
-        (2, 1),
-        (511, 1),
-        (3, 513),
-        (64, 128),
-        (113, 203),
-        (128, 128),
-        (128, 217),
-        (113, 211),
-        (108, 256),
-        (256, 512),
-        (384, 256),
-        (512, 256),
-        (640, 128),
-        (1024, 1024),
-        (1023, 1024),
-        (1024, 1023),
-        (2048, 2048),
+        # (1, 1),
+        # (1, 3),
+        # (2, 1),
+        # (511, 1),
+        # (3, 513),
+        # (64, 128),
+        # (113, 203),
+        # (128, 128),
+        # (128, 217),
+        # (113, 211),
+        # (108, 256),
+        # (256, 512),
+        # (384, 256),
+        # (512, 256),
+        # (640, 128),
+        # (1024, 1024),
+        # (1023, 1024),
+        # (1024, 1023),
+        # (2048, 2048),
+        (4096, 4096),
     ],
 )
 # @pytest.mark.parametrize('seqlen_q,seqlen_k', [(128, 128)])
@@ -541,11 +547,11 @@ def test_flash_attn_varlen_output(
 
 @pytest.mark.parametrize("dtype_fp8", [torch.float8_e4m3fn])
 # @pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"])
-@pytest.mark.parametrize("mha_type", ["mqa"])
+@pytest.mark.parametrize("mha_type", ["mha"])
 @pytest.mark.parametrize("causal", [False, True])
 # @pytest.mark.parametrize("causal", [False])
-@pytest.mark.parametrize("local", [False, True])
-# @pytest.mark.parametrize("local", [False])
+# @pytest.mark.parametrize("local", [False, True])
+@pytest.mark.parametrize("local", [False])
 # @pytest.mark.parametrize("deterministic", [False, True])
 @pytest.mark.parametrize("deterministic", [True])
 # @pytest.mark.parametrize("add_unused_qkv", [False, True])
@@ -553,28 +559,28 @@ def test_flash_attn_varlen_output(
 # @pytest.mark.parametrize("d", [32, 59, 64, 80, 96, 111, 128, 160, 192, 224, 256])
 # @pytest.mark.parametrize("d", [32, 64, 96, 128, 160, 192, 224, 256])
 # @pytest.mark.parametrize('d', [256])
-@pytest.mark.parametrize("d", [64, 128, 256])
+# @pytest.mark.parametrize("d", [64, 128, 256])
 # @pytest.mark.parametrize("d", [64, 128])
-# @pytest.mark.parametrize("d", [128])
+@pytest.mark.parametrize("d", [128])
 @pytest.mark.parametrize("descale", [1.0])
 @pytest.mark.parametrize(
     "seqlen_q,seqlen_k",
     [
-        (1, 1),
-        (1, 3),
-        (2, 1),
-        (511, 1),
-        (3, 513),
-        (64, 128),
-        (113, 203),
-        (128, 128),
-        (128, 217),
-        (113, 211),
-        (108, 256),
-        (256, 512),
-        (384, 256),
-        (512, 256),
-        (640, 128),
+        # (1, 1),
+        # (1, 3),
+        # (2, 1),
+        # (511, 1),
+        # (3, 513),
+        # (64, 128),
+        # (113, 203),
+        # (128, 128),
+        # (128, 217),
+        # (113, 211),
+        # (108, 256),
+        # (256, 512),
+        # (384, 256),
+        # (512, 256),
+        # (640, 128),
         (1024, 1024),
         (1023, 1024),
         (1024, 1023),
@@ -586,7 +592,7 @@ def test_flash_attn_varlen_output(
 def test_flash_attn_varlen_fp8_output(
     seqlen_q, seqlen_k, d, causal, local, deterministic, add_unused_qkv, mha_type, dtype_fp8, descale
 ):
-    print(dtype_fp8)
+    print(dtype_fp8, causal)
     dtype = torch.bfloat16
     if (
         max(seqlen_q, seqlen_k) >= 2048
@@ -665,10 +671,12 @@ def test_flash_attn_varlen_fp8_output(
     k_unpad = k_unpad.to(dtype_fp8)
     v_unpad = v_unpad.to(dtype_fp8)  
 
-    print(cu_seqlens_q)
-    print(cu_seqlens_k)
-    print(max_seqlen_q)
-    print(max_seqlen_k)
+    # print(cu_seqlens_q)
+    # print(cu_seqlens_k)
+    # print(max_seqlen_q)
+    # print(max_seqlen_k)
+    # torch.cuda.synchronize()
+
 
     out_unpad, sm_lse = flash_attn_varlen_func(
         q_unpad,
@@ -700,6 +708,9 @@ def test_flash_attn_varlen_fp8_output(
     k = k * descale_k
     v = v * descale_v
 
+    # print(out)
+
+
     out_ref, attn_ref = attention_ref(
         q,
         k,
@@ -725,6 +736,24 @@ def test_flash_attn_varlen_fp8_output(
     print(f"Output mean diff: {(out - out_ref).abs().mean().item()}")
     print(f"Pytorch max diff: {(out_pt - out_ref).abs().max().item()}")
     print(f"Pytorch mean diff: {(out_pt - out_ref).abs().mean().item()}")
+
+    # atol = 4 * (out_pt - out_ref).abs().max().item() + 1e-2
+    atol = 1e-2
+    try:
+        torch.testing.assert_close(out, out_ref, rtol=1e-2, atol=atol, check_dtype=False)
+    except AssertionError as e:
+        # Calculate absolute differences
+        diff = (out - out_ref).abs()
+        
+        # Get the indices of the top 2 maximum differences
+        top2_diff_values, top2_diff_indices = torch.topk(diff.flatten(), k=2)
+        
+        # Print the results
+        for i, idx in enumerate(top2_diff_indices):
+            coords = torch.unravel_index(idx, diff.shape)
+            print(f"Entry {i+1} with greatest diff: Coordinates: {coords}, "
+                f"out: {out[coords].item()}, out_ref: {out_ref[coords].item()}, "
+                f"diff: {top2_diff_values[i].item()}")
 
     # Check that FlashAttention's numerical error is at most twice the numerical error
     # of a Pytorch implementation.

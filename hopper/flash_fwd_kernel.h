@@ -288,7 +288,7 @@ __global__ void __launch_bounds__(Ktraits::kNWarps * cutlass::NumThreadsPerWarp,
     pipeline_params.num_consumers = NumMmaThreads;
 
     if constexpr(seqlen_traits_q.UseVarSeqLen || seqlen_traits_k.UseVarSeqLen) {
-        static_assert(size(ClusterShape{}) == 1, "Clusters must be disabled for valen.");
+        static_assert(size(ClusterShape{}) == 1, "Clusters must be disabled for varlen.");
     }
 
     if (warp_idx == 0 && lane_predicate) {

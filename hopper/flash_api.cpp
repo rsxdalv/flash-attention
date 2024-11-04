@@ -428,6 +428,12 @@ void run_mha_fwd(Flash_fwd_params &params, cudaStream_t stream, bool force_split
       });
     });
 
+    // HEADDIM_SWITCH(params.d, kHeadSize, [&] {
+    //     run_mha_fwd_<cutlass::float_e4m3_t, kHeadSize>(params, stream);
+    // });
+
+    // run_mha_fwd_<cutlass::float_e4m3_t, 128>(params, stream);
+
 #if 0
     if (!params.is_e4m3) { 
         if (params.is_bf16) {
@@ -774,8 +780,9 @@ mha_varlen_fwd(at::Tensor &q,  // total_q x num_heads x head_size, total_q := \s
     params.total_q = total_q;
     params.total_k = total_k;
 
-    auto tile_count_semaphore = is_causal || params.is_local
-        ? torch::zeros({1}, opts.dtype(torch::kInt32)) : torch::empty({1}, opts.dtype(torch::kInt32));
+    // auto tile_count_semaphore = is_causal || params.is_local
+    //     ? torch::zeros({1}, opts.dtype(torch::kInt32)) : torch::empty({1}, opts.dtype(torch::kInt32));
+    auto tile_count_semaphore = torch::zeros({1}, opts.dtype(torch::kInt32));
     params.tile_count_semaphore = tile_count_semaphore.data_ptr<int>();
 
     at::Tensor descale_q, descale_k, descale_v;
@@ -828,23 +835,23 @@ void run_mha_bwd(Flash_bwd_params &params, cudaStream_t stream) {
   //         run_mha_bwd_<elem_type, kHeadDim>(params, stream);
   //     });
   // });
-  if (!params.is_bf16) {
-    if (params.d <= 64) {
-      run_mha_bwd_<cutlass::half_t, 64>(params, stream);
-    } else if (params.d <= 96) {
-      run_mha_bwd_<cutlass::half_t, 96>(params, stream);
-    } else {
-      run_mha_bwd_<cutlass::half_t, 128>(params, stream);
-    }
-  } else {
-    if (params.d <= 64) {
-      run_mha_bwd_<cutlass::bfloat16_t, 64>(params, stream);
-    } else if (params.d <= 96) {
-      run_mha_bwd_<cutlass::bfloat16_t, 96>(params, stream);
-    } else {
-      run_mha_bwd_<cutlass::bfloat16_t, 128>(params, stream);
-    }
-  }
+//   if (!params.is_bf16) {
+//     if (params.d <= 64) {
+//       run_mha_bwd_<cutlass::half_t, 64>(params, stream);
+//     } else if (params.d <= 96) {
+//       run_mha_bwd_<cutlass::half_t, 96>(params, stream);
+//     } else {
+//       run_mha_bwd_<cutlass::half_t, 128>(params, stream);
+//     }
+//   } else {
+//     if (params.d <= 64) {
+//       run_mha_bwd_<cutlass::bfloat16_t, 64>(params, stream);
+//     } else if (params.d <= 96) {
+//       run_mha_bwd_<cutlass::bfloat16_t, 96>(params, stream);
+//     } else {
+//       run_mha_bwd_<cutlass::bfloat16_t, 128>(params, stream);
+//     }
+//   }
 }
 
 std::vector<at::Tensor>

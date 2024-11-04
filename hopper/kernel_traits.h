@@ -143,6 +143,29 @@ struct SharedStorageQKVVt {
   };
 };
 
+template <int kStages, class Gemm1Type, class Gemm2Type, class OutputType, class SmemLayoutQ,
+          class SmemLayoutK, class SmemLayoutV, class SmemLayoutO>
+struct SharedStorageQKVOVt_nounion {
+  struct {
+    cute::array_aligned<Gemm1Type, cute::cosize_v<SmemLayoutQ>> smem_q;
+    cute::array_aligned<Gemm1Type, cute::cosize_v<SmemLayoutK>> smem_k;
+    cute::array_aligned<Gemm2Type, cute::cosize_v<SmemLayoutV>> smem_v;  
+    cute::array_aligned<Gemm2Type, cute::cosize_v<SmemLayoutV>> smem_v_out;
+    cute::array_aligned<OutputType, cute::cosize_v<SmemLayoutO>> smem_o;
+  };
+  struct {    
+    cutlass::arch::ClusterTransactionBarrier barrier_Q;
+    cutlass::arch::ClusterBarrier barrier_O;
+    typename cutlass::PipelineTmaAsync<kStages>::SharedStorage pipeline_k;
+    typename cutlass::PipelineTmaAsync<kStages>::SharedStorage pipeline_v;
+    typename cutlass::PipelineAsync<kStages>::SharedStorage pipeline_vt;
+    int tile_count_semaphore;
+    float softmax_scale_qk_log2;
+    float descale_v;
+    bool seqlen_init_k;
+  };
+};
+
 // If Share_Q_K_smem is true, that forces Is_Q_in_regs to be true
 template<int kHeadDim_, int kBlockM_, int kBlockN_, int kNWarps_, int kStages_, bool Is_Q_in_regs_=false,
          int kClusterM_ = 1, typename elem_type=cutlass::half_t, bool Is_split_=false, int kBlockH_ = 1>

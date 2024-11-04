@@ -284,12 +284,15 @@ struct CollectiveEpilogueFwd {
                     tma_store_arrive();
                 }
             }
+            // if constexpr(Seqlen_traits::UseVarSeqLen) {
+            //     cutlass::arch::NamedBarrier::sync(NumMmaThreads, static_cast<int>(FwdNamedBarriers::OutputEmpty) /*id*/);
+            // }
         }
     }
 
     CUTLASS_DEVICE void
     store_tail() {
-        if constexpr(!No_smem_O) { tma_store_wait<0>(); }
+        if constexpr(!Seqlen_traits::UseVarSeqLen && !No_smem_O) { tma_store_wait<0>(); }
     }
 
     // Write 0 to output and -inf to LSE

@@ -380,7 +380,16 @@ struct CollectiveMainloopFwd {
         // Wait for warp 1 to signal that smem_v are ready and V can be copied from gmem
         // Need ClusterBarrier, not just NamedBarrier. Otherwise we might have CTA 0 finishing the
         // TMA store on O first, call TMA multicast load on V, before CTA 1 can finishing TMA store on O.
-        if constexpr (!No_smem_O) { shared_storage.barrier_O.wait((work_idx + 1) % 2); }
+        if constexpr (!No_smem_O) {
+            shared_storage.barrier_O.wait((work_idx + 1) % 2);
+            // if constexpr(!seqlen_traits_q.UseVarSeqLen) {
+            //     shared_storage.barrier_O.wait((work_idx + 1) % 2);
+            // } else {
+            //     // Wait for the MMA warpgroups to say that smem_o is ready
+            //     cutlass::arch::NamedBarrier::sync(NumMmaThreads + cutlass::NumThreadsPerWarp, static_cast<int>(FwdNamedBarriers::OutputEmpty) /*id*/);
+            // }
+        }
+        
         if (lane_predicate) {
             // CUTLASS_PRAGMA_NO_UNROLL
             #pragma unroll 2
@@ -447,6 +456,7 @@ struct CollectiveMainloopFwd {
                                 flatten(sVt_divide(_, i, j, stage)));
                 }
             }
+            cutlass::arch::fence_view_async_shared();
             cutlass::arch::NamedBarrier::sync(cutlass::NumThreadsPerWarpGroup, static_cast<int>(FwdNamedBarriers::ProducerWG) /*id*/);
         };
 
@@ -524,7 +534,16 @@ struct CollectiveMainloopFwd {
         // except for split kernel + hdim 256,
         // so could use NamedBarrier instead of ClusterBarrier.
         // But, this doesn't appear to have any benefit.
-        if constexpr (!No_smem_O) { shared_storage.barrier_O.wait((work_idx + 1) % 2); }
+        if constexpr (!No_smem_O) {
+            shared_storage.barrier_O.wait((work_idx + 1) % 2);
+            // if constexpr(!seqlen_traits_q.UseVarSeqLen) {
+            //     shared_storage.barrier_O.wait((work_idx + 1) % 2);
+            // } else {
+            //     // Wait for the MMA warpgroups to say that smem_o is empty
+            //     cutlass::arch::NamedBarrier::sync(NumMmaThreads + cutlass::NumThreadsPerWarpGroup, static_cast<int>(FwdNamedBarriers::OutputEmpty) /*id*/);
+            //     // shared_storage.barrier_O.wait((work_idx + 1) % 2);
+            // }
+        }
 
         if constexpr(Ktraits::VO_union_all) {
             if (warp_idx_in_warpgroup == 0 && lane_predicate) {
@@ -702,7 +721,8 @@ struct CollectiveMainloopFwd {
         warp_scheduler_barrier_sync();
         flash::gemm</*zero_init=*/true, /*wg_wait=*/-1>(tiled_mma0, tSrQ, tSrK(_, _, _, smem_pipe_read_k.index()), tSrS);
         warp_scheduler_barrier_arrive();
-        if constexpr (!No_smem_O && !seqlen_traits_q.UseVarSeqLen) {
+        // if constexpr (!No_smem_O && !seqlen_traits_q.UseVarSeqLen) {
+        if constexpr (!No_smem_O) {
             if (work_idx != 0) {
                 int lane_predicate = cute::elect_one_sync();
                 if (cutlass::canonical_warp_idx_sync() == Ktraits::kNWarps - 1 && lane_predicate) {
@@ -901,8 +921,8 @@ struct CollectiveMainloopFwd {
         consumer_wait(pipeline_k, smem_pipe_read);                        
         warp_scheduler_barrier_sync();
         flash::gemm</*zero_init=*/true, /*wg_wait=*/-1>(tiled_mma0, tSrQ, tSrK(_, _, _, smem_pipe_read.index()), tSrS);
-        if constexpr (!No_smem_O && !seqlen_traits_q.UseVarSeqLen) {
-            if (work_idx != 0) {        
+        if constexpr (!No_smem_O) {
+            if (work_idx != 0) {
                 int lane_predicate = cute::elect_one_sync();
                 if (cutlass::canonical_warp_idx_sync() == Ktraits::kNWarps - 1 && lane_predicate) {
                     tma_store_wait<0>();
@@ -910,7 +930,7 @@ struct CollectiveMainloopFwd {
                     for (uint32_t cta_id = 0; cta_id < size(ClusterShape{}); ++cta_id) {
                         shared_storage.barrier_O.arrive(cta_id, lane_predicate);
                     }
-                }        
+                }
             }
         }
         warpgroup_wait<0>();

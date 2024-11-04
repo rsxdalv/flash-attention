@@ -81,11 +81,12 @@ __global__ void __launch_bounds__(Ktraits::kNWarps * cutlass::NumThreadsPerWarp,
     if (warp_idx == 0 && lane_predicate) {
         shared_storage.barrier_Q.init(1 /*numThreads*/);
         if constexpr (!No_smem_O) {
-            if constexpr(seqlen_traits_q.UseVarSeqLen) {
-                shared_storage.barrier_O.init(NumMmaThreads /*numThreads*/);
-            } else {
-                shared_storage.barrier_O.init(size(ClusterShape{}) /*numThreads*/);
-            }
+            shared_storage.barrier_O.init(size(ClusterShape{}) /*numThreads*/);
+            // if constexpr(seqlen_traits_q.UseVarSeqLen) {
+            //     shared_storage.barrier_O.init(NumMmaThreads /*numThreads*/);
+            // } else {
+            //     shared_storage.barrier_O.init(size(ClusterShape{}) /*numThreads*/);
+            // }
         }
     }
     // We're counting on pipeline_k to call cutlass::arch::fence_barrier_init();
@@ -210,7 +211,10 @@ __global__ void __launch_bounds__(Ktraits::kNWarps * cutlass::NumThreadsPerWarp,
             collective_epilogue.store(
                 epilogue_params, tOrO, softmax.row_sum, shared_storage, tiled_mma1,
                 threadIdx.x - NumCopyThreads, block_coord, seqlen_traits_q, mainloop_params.qhead_per_khead_divmod);
-            if constexpr(!No_smem_O && seqlen_traits_q.UseVarSeqLen) { shared_storage.barrier_O.arrive(); }
+            // if constexpr(!No_smem_O && seqlen_traits_q.UseVarSeqLen) { shared_storage.barrier_O.arrive(); }
+            if constexpr(!No_smem_O && seqlen_traits_q.UseVarSeqLen) {
+                cutlass::arch::NamedBarrier::sync(NumMmaThreads, static_cast<int>(FwdNamedBarriers::OutputEmpty) /*id*/);
+            }
             ++work_idx;
         }
         collective_epilogue.store_tail();
@@ -283,14 +287,20 @@ __global__ void __launch_bounds__(Ktraits::kNWarps * cutlass::NumThreadsPerWarp,
     pipeline_params.is_leader = warp_group_thread_idx == 0;
     pipeline_params.num_consumers = NumMmaThreads;
 
+    if constexpr(seqlen_traits_q.UseVarSeqLen || seqlen_traits_k.UseVarSeqLen) {
+        static_assert(size(ClusterShape{}) == 1, "Clusters must be disabled for valen.");
+    }
+
     if (warp_idx == 0 && lane_predicate) {
         shared_storage.barrier_Q.init(1 /*numThreads*/);
         if constexpr (!No_smem_O) {
-            if constexpr(seqlen_traits_q.UseVarSeqLen) {
-                shared_storage.barrier_O.init(NumMmaThreads /*numThreads*/);
-            } else {
-                shared_storage.barrier_O.init(size(ClusterShape{}) /*numThreads*/);
-            }
+            shared_storage.barrier_O.init(size(ClusterShape{}) /*numThreads*/);
+            // if constexpr(seqlen_traits_q.UseVarSeqLen) {
+                // shared_storage.barrier_O.init(Ktraits::kNWarps - 4 /*numMmaWarps*/);
+                // shared_storage.barrier_O.init(NumMmaThreads /*numThreads*/);
+            // } else {
+                // shared_storage.barrier_O.init(size(ClusterShape{}) /*numThreads*/);
+            // }
         }
     }
     // We're counting on pipeline_k to call cutlass::arch::fence_barrier_init();
@@ -331,6 +341,8 @@ __global__ void __launch_bounds__(Ktraits::kNWarps * cutlass::NumThreadsPerWarp,
         for (auto work_tile_info = scheduler.get_initial_work();
                 work_tile_info.is_valid(scheduler_params);
                 work_tile_info = scheduler.template get_next_work</*IsProducer=*/true>(scheduler_params, work_tile_info)) {
+            
+            // cutlass::arch::NamedBarrier::sync(NumMmaThreads + NumCopyThreads, static_cast<int>(FwdNamedBarriers::NextWorkTile) /*id*/);
             auto block_coord = work_tile_info.get_block_coord(scheduler_params);
             auto [m_block, n_split_idx, bidh, bidb] = block_coord;
 
@@ -360,6 +372,7 @@ __global__ void __launch_bounds__(Ktraits::kNWarps * cutlass::NumThreadsPerWarp,
                     continue;
                 }
             }
+            
             collective_mainloop.load_fp8(
                 mainloop_params, pipeline_k, pipeline_v, pipeline_vt, smem_pipe_write, smem_pipe_read,
                 shared_storage, scheduler, scheduler_params, work_tile_info, block_coord, work_idx,
@@ -368,6 +381,7 @@ __global__ void __launch_bounds__(Ktraits::kNWarps * cutlass::NumThreadsPerWarp,
             // don't need to sync producer warpgroup here
             // if constexpr (Is_causal) {
             //     cutlass::arch::NamedBarrier::sync(NumCopyThreads, static_cast<int>(FwdNamedBarriers::ProducerWG) /*id*/); }
+            // cutlass::arch::NamedBarrier::sync(NumMmaThreads + NumCopyThreads, static_cast<int>(FwdNamedBarriers::OutputEmpty) /*id*/);
         }
         collective_mainloop.load_tail_one_write(pipeline_k, pipeline_v, smem_pipe_write);
     } else {  // Consumer
@@ -380,6 +394,9 @@ __global__ void __launch_bounds__(Ktraits::kNWarps * cutlass::NumThreadsPerWarp,
         PipelineState smem_pipe_release;
 
         collective_mainloop.mma_init();
+        // if constexpr(!No_smem_O && seqlen_traits_q.UseVarSeqLen) {
+        //     cutlass::arch::NamedBarrier::arrive(NumMmaThreads + Ktraits::NumProducerThreads, static_cast<int>(FwdNamedBarriers::OutputEmpty) /*id*/);
+        // }
         scheduler.init_consumer();
 
         int work_idx = 0;
@@ -388,12 +405,15 @@ __global__ void __launch_bounds__(Ktraits::kNWarps * cutlass::NumThreadsPerWarp,
         for (auto work_tile_info = scheduler.get_initial_work();
              work_tile_info.is_valid(scheduler_params);
              work_tile_info = scheduler.template get_next_work</*IsProducer=*/false>(scheduler_params, work_tile_info)) {
+            
+            // cutlass::arch::NamedBarrier::sync(NumMmaThreads + NumCopyThreads, static_cast<int>(FwdNamedBarriers::NextWorkTile) /*id*/);
             // Attention output (GEMM-II) accumulator.
             Tensor tOrO = partition_fragment_C(tiled_mma1, select<0, 2>(TileShape_MNK{}));
             flash::Softmax<2 * (2 * kBlockM / NumMmaThreads), Use_max_offset> softmax(shared_storage.softmax_scale_qk_log2);
 
             auto block_coord = work_tile_info.get_block_coord(scheduler_params);
             auto [m_block, n_split_idx, bidh, bidb] = block_coord;
+            
 
             if constexpr (seqlen_traits_q.UseVarSeqLen) { seqlen_traits_q.init(bidb); }
             if constexpr (seqlen_traits_k.UseVarSeqLen) { seqlen_traits_k.init(bidb); }
@@ -429,8 +449,15 @@ __global__ void __launch_bounds__(Ktraits::kNWarps * cutlass::NumThreadsPerWarp,
             collective_epilogue.store(
                 epilogue_params, tOrO, softmax.row_sum, shared_storage, tiled_mma1,
                 threadIdx.x - NumCopyThreads, block_coord, seqlen_traits_q, mainloop_params.qhead_per_khead_divmod);
-            if constexpr(!No_smem_O && seqlen_traits_q.UseVarSeqLen) { shared_storage.barrier_O.arrive(); }
+            // if constexpr(!No_smem_O && seqlen_traits_q.UseVarSeqLen) {
+                // int lane_predicate = cute::elect_one_sync();
+                // if(lane_predicate) { shared_storage.barrier_O.arrive(0 /*cta_id*/, lane_predicate); }
+                // shared_storage.barrier_O.arrive();
+                // cutlass::arch::NamedBarrier::arrive(NumMmaThreads + Ktraits::NumProducerThreads, static_cast<int>(FwdNamedBarriers::OutputEmpty) /*id*/);
+                // cutlass::arch::NamedBarrier::sync(NumMmaThreads, static_cast<int>(FwdNamedBarriers::OutputEmpty) /*id*/);
+            // }
             ++work_idx;
+            // cutlass::arch::NamedBarrier::sync(NumMmaThreads + NumCopyThreads, static_cast<int>(FwdNamedBarriers::OutputEmpty) /*id*/);
         }
         collective_epilogue.store_tail();
     }
